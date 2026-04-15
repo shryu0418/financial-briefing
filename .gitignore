@@ -1,0 +1,21 @@
+# 생성된 파일 (GitHub Actions에서 자동 생성)
+daily_briefing.html
+briefing_history.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# 기타 데스크탑 파일들 (financial_briefing.py와 .github만 포함)
+*
+!financial_briefing.py
+!.github/
+!.github/**
+!.gitignore
+!README.md
