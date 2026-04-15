@@ -1712,18 +1712,17 @@ function updateAll() {
     const allocPct = isExt ? (extAlloc[catKey]||0) : alloc[catIdx];
     const allocAmt = Math.round(TOTAL * allocPct / 100 / 10000);
     const eventBadge = isExt && allocPct > 0 ? ' <span style="background:#f0883e;color:#fff;padding:0 5px;border-radius:3px;font-size:9px;font-weight:700">EVENT</span>' : '';
-    const expandBtn = hasMore ? `<button class="expand-toggle" onclick="toggleCatExpand('${expandId}',this)" style="margin-top:4px;width:100%;padding:4px;border:1px solid #30363d;background:#0d1117;color:#58a6ff;font-size:11px;border-radius:4px;cursor:pointer">▼ Top 10 펼치기 (${topAll.length}개)</button>` : '';
+    const expandBtn = hasMore ? `<button class="expand-toggle" data-label="▼ +${topAll.length - defaultShow}" onclick="toggleCatExpand('${expandId}',this)" style="margin-left:6px;padding:1px 6px;border:1px solid #30363d;background:#161b22;color:#58a6ff;font-size:10px;border-radius:3px;cursor:pointer;vertical-align:middle;line-height:1.4">▼ +${topAll.length - defaultShow}</button>` : '';
     container.innerHTML += `
 <div style="margin-bottom:10px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-    <span style="font-size:13px;font-weight:600;color:${catColor}">${catKey}${eventBadge}${bonusTag}</span>
+    <span style="font-size:13px;font-weight:600;color:${catColor}">${catKey}${eventBadge}${bonusTag}${expandBtn}</span>
     <span style="font-size:11px;color:#8b949e">${allocPct > 0 ? `배분 ${allocPct}% (${allocAmt.toLocaleString()}만원)` : '매크로 수혜 섹터'}</span>
   </div>
   <table class="stock-table" id="${expandId}">
   <tr><th>종목</th><th>티커</th><th>현재가</th><th>1개월</th><th>3개월</th><th>변동성</th><th>RSI</th><th>추세</th><th>낙폭</th><th>적합도</th></tr>
   ${rows}
   </table>
-  ${expandBtn}
 </div>`;
   });
 
@@ -1843,8 +1842,8 @@ function toggleCatExpand(tableId, btn) {
   const rows = tbl.querySelectorAll('.expand-row');
   const isHidden = rows[0]?.style.display === 'none';
   rows.forEach(r => r.style.display = isHidden ? '' : 'none');
-  btn.textContent = isHidden ? '▲ 접기' : btn.getAttribute('data-label') || '▼ Top 10 펼치기';
-  if (!btn.getAttribute('data-label')) btn.setAttribute('data-label', btn.textContent);
+  const origLabel = btn.getAttribute('data-label');
+  btn.textContent = isHidden ? '▲ 접기' : origLabel;
 }
 
 document.addEventListener('DOMContentLoaded', () => { renderMacroToggles(); updateAll(); });
