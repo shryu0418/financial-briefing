@@ -1,6 +1,5 @@
-# 생성된 파일 (GitHub Actions에서 자동 생성)
+# 생성된 파일 (daily_briefing.html은 Actions에서 자동 생성)
 daily_briefing.html
-briefing_history.json
 
 # Python
 __pycache__/
@@ -15,7 +14,9 @@ desktop.ini
 # 기타 데스크탑 파일들 (financial_briefing.py와 .github만 포함)
 *
 !financial_briefing.py
+!briefing_history.json
 !.github/
 !.github/**
 !.gitignore
 !README.md
+!run_briefing.bat

@@ -18,11 +18,11 @@ MACRO_FILE = OUTPUT_DIR / "macro_events.json"
 PORTFOLIO_HOLDINGS = [
     {'ticker': 'TSLA', 'name': '테슬라', 'type': '미국주식', 'shares': 40, 'avg_cost': 229.93},
     {'ticker': 'AAPL', 'name': '애플', 'type': '미국주식', 'shares': 15, 'avg_cost': 172.50},
-    {'ticker': 'IONQ', 'name': '아이온큐', 'type': '미국주식', 'shares': 83, 'avg_cost': 74.50},
-    {'ticker': 'RGTI', 'name': '리게티컴퓨팅', 'type': '미국주식', 'shares': 116, 'avg_cost': 42.76},
+    {'ticker': 'TLT', 'name': '미국 장기국채 ETF', 'type': '채권/안전자산', 'shares': 8, 'avg_cost': 86.89},
+    {'ticker': 'SGOV', 'name': '미국 단기국채 ETF', 'type': '채권/안전자산', 'shares': 35, 'avg_cost': 100.52},
     {'ticker': 'SCO', 'name': '원유 2x 인버스', 'type': '원유 인버스', 'shares': 54, 'avg_cost': 7.70},
 ]
-TOTAL_INVESTMENT_KRW = 34_320_000  # 총 평가금액 약 3,432만원
+TOTAL_INVESTMENT_KRW = 34_320_000  # 총 투자금 약 3,432만원
 USD_CASH = 419  # 보유 달러 현금
 
 # 포트폴리오 제안에 포함할 자산들

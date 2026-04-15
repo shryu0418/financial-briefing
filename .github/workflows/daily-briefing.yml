@@ -7,7 +7,7 @@ on:
   workflow_dispatch:  # 수동 실행 가능
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -33,16 +33,28 @@ jobs:
       - name: Install dependencies
         run: pip install yfinance pandas
 
+      - name: Restore history
+        run: |
+          # 이전 빌드의 briefing_history.json을 GitHub Pages에서 복원
+          curl -sf https://shryu0418.github.io/financial-briefing/briefing_history.json -o briefing_history.json || echo '[]' > briefing_history.json
+
       - name: Generate briefing
         run: python financial_briefing.py
         continue-on-error: false
+
+      - name: Save history to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add briefing_history.json || true
+          git diff --cached --quiet || git commit -m "Update briefing history $(date +%Y-%m-%d)"
+          git push || true
 
       - name: Prepare Pages artifact
         run: |
           mkdir -p _site
           cp daily_briefing.html _site/index.html
           cp daily_briefing.html _site/daily_briefing.html
-          # briefing_history.json이 있으면 복사
           [ -f briefing_history.json ] && cp briefing_history.json _site/ || true
 
       - name: Upload Pages artifact
