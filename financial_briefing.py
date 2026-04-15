@@ -1672,30 +1672,27 @@ function updateAll() {
 
     const scored = items.map(it => ({...it, score: scoreItem(it, risk, catKey)}));
     scored.sort((a,b) => b.score - a.score);
-    const top = scored.slice(0, risk > 60 ? 5 : 3);
+    const topAll = scored.slice(0, Math.min(10, scored.length));
+    const defaultShow = 3;
 
     const catColor = isExt ? (EXT_COLORS[catKey]||'#8b949e') : CATS[catIdx].color;
     const sectorBonus = macroBonus[catKey] || 0;
     const bonusTag = sectorBonus > 0 ? ` <span style="color:#3fb950;font-size:10px;font-weight:700">▲ 이벤트 수혜 +${sectorBonus}</span>` : sectorBonus < 0 ? ` <span style="color:#f85149;font-size:10px;font-weight:700">▼ 이벤트 리스크 ${sectorBonus}</span>` : '';
-    let rows = '';
-    top.forEach((p,idx) => {
+
+    function buildRow(p, idx) {
       const medal = idx===0 ? ' style="border-left:3px solid '+catColor+'"' : '';
       const tag = idx===0 ? `<span style="background:${catColor};color:#fff;padding:0 6px;border-radius:3px;font-size:9px;font-weight:700;margin-left:6px">TOP</span>` : '';
-      // RSI 시그널 뱃지
       const rsi = p.rsi||50;
       const rsiBadge = rsi > 75 ? `<span style="color:#f85149;font-size:9px">과열</span>` : rsi < 30 ? `<span style="color:#3fb950;font-size:9px">과매도</span>` : `<span style="color:#8b949e;font-size:9px">${rsi.toFixed(0)}</span>`;
-      // 추세 가속 뱃지
       const ac = p.accel||0;
       const acBadge = ac > 3 ? `<span class="tag-up" style="font-size:9px">가속↑</span>` : ac < -3 ? `<span class="tag-down" style="font-size:9px">둔화↓</span>` : `<span style="color:#8b949e;font-size:9px">${ac>0?'+':''}${ac.toFixed(1)}</span>`;
-      // 낙폭
       const dd = p.dd||0;
       const ddStr = dd < -10 ? `<span style="color:#f0883e;font-size:9px">${dd.toFixed(0)}%</span>` : `<span style="color:#8b949e;font-size:9px">${dd.toFixed(0)}%</span>`;
-      // 레버리지 뱃지
       const lv = p.lev || 1;
       const levBadge = lv >= 3 ? `<span style="background:#f85149;color:#fff;padding:0 4px;border-radius:2px;font-size:8px;font-weight:700;margin-left:4px">${lv}x</span>` : lv === 2 ? `<span style="background:#f0883e;color:#fff;padding:0 4px;border-radius:2px;font-size:8px;font-weight:700;margin-left:4px">${lv}x</span>` : '';
-      // 암호화폐 티어 뱃지
       const tierBadge = (catKey === '암호화폐' && p.tier === 3) ? `<span style="background:#8b949e;color:#fff;padding:0 4px;border-radius:2px;font-size:8px;margin-left:4px">ALT</span>` : '';
-      rows += `<tr${medal}>
+      const hidden = idx >= defaultShow ? ' class="expand-row" style="display:none"' : '';
+      return `<tr${medal}${hidden}>
 <td><a href="${p.url}" target="_blank"><span class="ticker">${p.name}</span></a>${tag}${levBadge}${tierBadge}</td>
 <td>${p.ticker}</td>
 <td>${fmtPrice(p.price)}</td>
@@ -1707,21 +1704,26 @@ function updateAll() {
 <td style="text-align:center">${ddStr}</td>
 <td style="font-weight:600;color:${p.score>0?'#3fb950':'#f85149'}">${p.score.toFixed(1)}</td>
 </tr>`;
-    });
+    }
+    const rows = topAll.map((p,i) => buildRow(p,i)).join('');
+    const hasMore = topAll.length > defaultShow;
+    const expandId = 'exp_' + catKey.replace(/[^a-zA-Z0-9]/g,'_');
 
     const allocPct = isExt ? (extAlloc[catKey]||0) : alloc[catIdx];
     const allocAmt = Math.round(TOTAL * allocPct / 100 / 10000);
     const eventBadge = isExt && allocPct > 0 ? ' <span style="background:#f0883e;color:#fff;padding:0 5px;border-radius:3px;font-size:9px;font-weight:700">EVENT</span>' : '';
+    const expandBtn = hasMore ? `<button class="expand-toggle" onclick="toggleCatExpand('${expandId}',this)" style="margin-top:4px;width:100%;padding:4px;border:1px solid #30363d;background:#0d1117;color:#58a6ff;font-size:11px;border-radius:4px;cursor:pointer">▼ Top 10 펼치기 (${topAll.length}개)</button>` : '';
     container.innerHTML += `
 <div style="margin-bottom:10px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
     <span style="font-size:13px;font-weight:600;color:${catColor}">${catKey}${eventBadge}${bonusTag}</span>
     <span style="font-size:11px;color:#8b949e">${allocPct > 0 ? `배분 ${allocPct}% (${allocAmt.toLocaleString()}만원)` : '매크로 수혜 섹터'}</span>
   </div>
-  <table class="stock-table">
+  <table class="stock-table" id="${expandId}">
   <tr><th>종목</th><th>티커</th><th>현재가</th><th>1개월</th><th>3개월</th><th>변동성</th><th>RSI</th><th>추세</th><th>낙폭</th><th>적합도</th></tr>
   ${rows}
   </table>
+  ${expandBtn}
 </div>`;
   });
 
@@ -1834,6 +1836,15 @@ function updateMacroSummary() {
     const sign = val > 0 ? '+' : '';
     return `<span style="display:inline-block;margin:2px 4px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;color:${c};background:${val>0?'rgba(63,185,80,.1)':'rgba(248,81,73,.1)'}">${sec} ${sign}${val}</span>`;
   }).join('');
+}
+
+function toggleCatExpand(tableId, btn) {
+  const tbl = document.getElementById(tableId);
+  const rows = tbl.querySelectorAll('.expand-row');
+  const isHidden = rows[0]?.style.display === 'none';
+  rows.forEach(r => r.style.display = isHidden ? '' : 'none');
+  btn.textContent = isHidden ? '▲ 접기' : btn.getAttribute('data-label') || '▼ Top 10 펼치기';
+  if (!btn.getAttribute('data-label')) btn.setAttribute('data-label', btn.textContent);
 }
 
 document.addEventListener('DOMContentLoaded', () => { renderMacroToggles(); updateAll(); });
