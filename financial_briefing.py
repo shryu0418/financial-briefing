@@ -4,7 +4,7 @@ Daily Financial Briefing Generator
 """
 import yfinance as yf
 import json, os, re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 OUTPUT_DIR = Path(__file__).parent
@@ -825,7 +825,8 @@ def generate_html(market_data, us_gainers, us_losers, us_mid_up, us_mid_down,
                    kr_upper, kr_lower, kr_big_up, kr_big_down, today_str, day_name):
     """HTML 보고서 생성"""
     day_id = f"day-{today_str}"
-    now_str = datetime.now().strftime('%H:%M')
+    KST = timezone(timedelta(hours=9))
+    now_str = datetime.now(KST).strftime('%H:%M')
 
     # Market cards
     market_cards = ''
@@ -2081,7 +2082,8 @@ self.addEventListener('fetch',e=>{
 
 
 def main():
-    today = datetime.now()
+    KST = timezone(timedelta(hours=9))
+    today = datetime.now(KST)
     today_str = today.strftime('%Y-%m-%d')
     day_names = ['월', '화', '수', '목', '금', '토', '일']
     day_name = day_names[today.weekday()]
