@@ -1160,6 +1160,7 @@ def generate_portfolio_html(holdings, candidates, suggestions, allocation, avg_1
                 'name': p['name'],
                 'ticker': p['ticker'],
                 'price': round(p['price'], 4),
+                'pct_1d': round(p.get('pct_1d', 0), 2),
                 'pct_1m': round(p['pct_1m'], 2),
                 'pct_3m': round(p['pct_3m'], 2),
                 'vol': round(p['vol_30d'], 2),
@@ -1696,7 +1697,7 @@ function updateAll() {
       return `<tr${medal}${hidden}>
 <td><a href="${p.url}" target="_blank"><span class="ticker">${p.name}</span></a>${tag}${levBadge}${tierBadge}</td>
 <td>${p.ticker}</td>
-<td>${fmtPrice(p.price)}</td>
+<td>${fmtPrice(p.price)}<br><span style="font-size:9px;color:${(p.pct_1d||0)>=0?'#3fb950':'#f85149'}">${(p.pct_1d||0)>=0?'+':''}${(p.pct_1d||0).toFixed(2)}%</span></td>
 <td>${fmtPct(p.pct_1m)}</td>
 <td>${fmtPct(p.pct_3m)}</td>
 <td>${p.vol.toFixed(1)}%</td>
