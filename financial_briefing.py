@@ -919,6 +919,159 @@ def generate_html(market_data, us_gainers, us_losers, us_mid_up, us_mid_down,
 
 # ── 5. 포트폴리오 분석 ───────────────────────────────────────────
 
+def fetch_kr_stock_candidates(top_n=1000):
+    """KRX 전종목에서 시가총액/거래대금 상위 종목을 스크리닝하여 후보 리스트 반환"""
+    import io, requests
+    import pandas as pd
+
+    print("  [한국주식] KRX 종목 리스트 수집...")
+    try:
+        url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
+        r = requests.get(url, timeout=15)
+        r.encoding = 'euc-kr'
+        df = pd.read_html(io.StringIO(r.text))[0]
+        code_col = df.columns[2]
+        name_col = df.columns[0]
+        df['code'] = df[code_col].astype(str).str.zfill(6)
+        df['name'] = df[name_col]
+        df = df[df['code'].str.match(r'^\d{6}$')]
+        name_map = dict(zip(df['code'], df['name']))
+        all_codes = df['code'].tolist()
+        print(f"  [한국주식] 전체 {len(all_codes)}개 종목")
+    except Exception as e:
+        print(f"  [한국주식] KRX 리스트 수집 실패: {e}")
+        return []
+
+    # 1차: 5일 데이터로 유효 종목 + 거래대금 파악 (KOSPI → KOSDAQ 순서)
+    print(f"  [한국주식] 1차 스크리닝 (유효 종목 + 거래대금)...")
+    valid_tickers = {}  # code -> {ticker, name, turnover, last_close}
+
+    # .KS (KOSPI) 배치
+    batch_size = 500
+    ks_tickers = [c + '.KS' for c in all_codes]
+    ks_valid = set()
+    for i in range(0, len(ks_tickers), batch_size):
+        chunk = ks_tickers[i:i+batch_size]
+        codes_chunk = all_codes[i:i+batch_size]
+        try:
+            batch = yf.download(chunk, period='5d', progress=False, threads=True)
+            if batch is not None and not batch.empty:
+                for c, t in zip(codes_chunk, chunk):
+                    try:
+                        if len(codes_chunk) == 1:
+                            closes = batch['Close'].dropna()
+                            vols = batch['Volume'].dropna()
+                        else:
+                            closes = batch['Close'][t].dropna()
+                            vols = batch['Volume'][t].dropna()
+                        if len(closes) > 0 and closes.iloc[-1] > 0:
+                            avg_vol = vols.mean() if len(vols) > 0 else 0
+                            turnover = closes.iloc[-1] * avg_vol
+                            valid_tickers[c] = {
+                                'ticker': t, 'name': name_map.get(c, c),
+                                'turnover': turnover, 'last_close': closes.iloc[-1]
+                            }
+                            ks_valid.add(c)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # .KQ (KOSDAQ) 배치 — .KS에서 못 찾은 종목만
+    remaining = [c for c in all_codes if c not in ks_valid]
+    kq_tickers = [c + '.KQ' for c in remaining]
+    for i in range(0, len(kq_tickers), batch_size):
+        chunk = kq_tickers[i:i+batch_size]
+        codes_chunk = remaining[i:i+batch_size]
+        try:
+            batch = yf.download(chunk, period='5d', progress=False, threads=True)
+            if batch is not None and not batch.empty:
+                for c, t in zip(codes_chunk, chunk):
+                    try:
+                        if len(codes_chunk) == 1:
+                            closes = batch['Close'].dropna()
+                            vols = batch['Volume'].dropna()
+                        else:
+                            closes = batch['Close'][t].dropna()
+                            vols = batch['Volume'][t].dropna()
+                        if len(closes) > 0 and closes.iloc[-1] > 0:
+                            avg_vol = vols.mean() if len(vols) > 0 else 0
+                            turnover = closes.iloc[-1] * avg_vol
+                            valid_tickers[c] = {
+                                'ticker': t, 'name': name_map.get(c, c),
+                                'turnover': turnover, 'last_close': closes.iloc[-1]
+                            }
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    print(f"  [한국주식] 유효 종목: {len(valid_tickers)}개")
+
+    # 거래대금 기준 상위 N개 선별
+    sorted_stocks = sorted(valid_tickers.values(), key=lambda x: x['turnover'], reverse=True)
+    top_stocks = sorted_stocks[:top_n]
+    print(f"  [한국주식] 거래대금 상위 {len(top_stocks)}개 선별")
+
+    # 2차: 3개월 데이터로 상세 분석
+    print(f"  [한국주식] 2차 분석 (3개월 데이터)...")
+    top_tickers = [s['ticker'] for s in top_stocks]
+    ticker_to_info = {s['ticker']: s for s in top_stocks}
+    candidates = []
+
+    for i in range(0, len(top_tickers), batch_size):
+        chunk = top_tickers[i:i+batch_size]
+        try:
+            batch = yf.download(chunk, period='3mo', progress=False, threads=True)
+            if batch is None or batch.empty:
+                continue
+            for t in chunk:
+                try:
+                    if len(chunk) == 1:
+                        closes = batch['Close'].dropna()
+                    else:
+                        closes = batch['Close'][t].dropna()
+                    if len(closes) < 2:
+                        continue
+                    info = ticker_to_info[t]
+                    price = closes.iloc[-1]
+                    pct_1d = ((closes.iloc[-1] - closes.iloc[-2]) / closes.iloc[-2] * 100)
+                    pct_1w = ((price - closes.iloc[-5]) / closes.iloc[-5] * 100) if len(closes) >= 5 else 0
+                    pct_1m = ((price - closes.iloc[-22]) / closes.iloc[-22] * 100) if len(closes) >= 22 else ((price - closes.iloc[0]) / closes.iloc[0] * 100)
+                    pct_3m = ((price - closes.iloc[0]) / closes.iloc[0] * 100)
+                    all_returns = closes.pct_change().dropna()
+                    vol_30d = (all_returns.tail(22).std() * (252 ** 0.5) * 100) if len(all_returns) >= 22 else 0
+                    sharpe_1m = (pct_1m / vol_30d) if vol_30d > 0 else 0
+                    rsi = 50
+                    if len(all_returns) >= 14:
+                        recent14 = all_returns.tail(14)
+                        gains = recent14[recent14 > 0].sum()
+                        losses = -recent14[recent14 < 0].sum()
+                        if losses > 0:
+                            rs = gains / losses
+                            rsi = 100 - (100 / (1 + rs))
+                        elif gains > 0:
+                            rsi = 100
+                    avg_3m_monthly = pct_3m / 3 if pct_3m != 0 else 0
+                    accel = pct_1m - avg_3m_monthly
+                    peak = closes.max()
+                    drawdown = ((price - peak) / peak * 100) if peak > 0 else 0
+                    candidates.append({
+                        'ticker': t, 'name': info['name'], 'price': price,
+                        'pct_1d': pct_1d, 'pct_1w': pct_1w, 'pct_1m': pct_1m,
+                        'pct_3m': pct_3m, 'vol_30d': vol_30d, 'sharpe': sharpe_1m,
+                        'rsi': rsi, 'accel': accel, 'drawdown': drawdown,
+                        'lev': 1, 'tier': 0,
+                    })
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    print(f"  [한국주식] 최종 후보: {len(candidates)}개")
+    return candidates
+
+
 def fetch_portfolio_data(usd_krw):
     """현재 보유 종목 + 후보 자산 시세 수집"""
     # 보유 종목 현재가
@@ -1044,6 +1197,12 @@ def fetch_portfolio_data(usd_krw):
             pass
         candidates[cat] = cat_data
 
+    # 한국주식 후보 추가
+    print("  한국주식 후보 수집 시작...")
+    kr_candidates = fetch_kr_stock_candidates(top_n=1000)
+    if kr_candidates:
+        candidates['한국주식'] = kr_candidates
+
     print(f"  포트폴리오: 보유 {len(holdings)}건, 후보 {sum(len(v) for v in candidates.values())}건")
     return holdings, candidates
 
@@ -1078,7 +1237,8 @@ def generate_portfolio_suggestion(holdings, candidates, usd_krw):
     if avg_1m > 5:
         # 강세장: 주식 비중 유지, 일부 금/코인
         allocation = [
-            ('현재 보유 미국주식', 55, '모멘텀 유지'),
+            ('한국주식', 15, '국내 성장주 발굴'),
+            ('현재 보유 미국주식', 40, '모멘텀 유지'),
             ('금/은', 15, '인플레이션 헤지'),
             ('암호화폐', 15, '고성장 포트폴리오'),
             ('원자재', 10, '분산 효과'),
@@ -1087,20 +1247,22 @@ def generate_portfolio_suggestion(holdings, candidates, usd_krw):
     elif avg_1m > 0:
         # 보통장: 균형 배분
         allocation = [
-            ('현재 보유 미국주식', 45, '핵심 보유'),
+            ('한국주식', 15, '국내 유망종목 투자'),
+            ('현재 보유 미국주식', 35, '핵심 보유'),
             ('금/은', 20, '안전자산 비중 확대'),
             ('암호화폐', 10, '성장 기회'),
             ('원자재', 10, '인플레이션 대비'),
-            ('채권/안전자산', 15, '안정성 강화'),
+            ('채권/안전자산', 10, '안정성 강화'),
         ]
     else:
         # 약세장: 방어적 배분
         allocation = [
-            ('현재 보유 미국주식', 30, '비중 축소'),
+            ('한국주식', 10, '국내 방어주 편입'),
+            ('현재 보유 미국주식', 25, '비중 축소'),
             ('금/은', 25, '안전자산 확대'),
             ('암호화폐', 5, '최소 배분'),
             ('원자재', 10, '실물자산'),
-            ('채권/안전자산', 30, '방어 최우선'),
+            ('채권/안전자산', 25, '방어 최우선'),
         ]
 
     return suggestions, allocation, avg_1m
@@ -1315,24 +1477,25 @@ const MACRO_EVENTS = ''' + macro_json_str + ''';
 let activeMacros = new Set();
 
 const ALLOC_PROFILES = {
-  3:  [15, 25,  0, 5, 55],
-  5:  [20, 25,  0, 5, 50],
-  7:  [25, 25,  2, 8, 40],
-  10: [35, 20,  5, 10, 30],
-  15: [45, 18,  8, 12, 17],
-  20: [50, 15, 10, 15, 10],
-  25: [50, 12, 13, 18, 7],
-  30: [48, 10, 15, 22, 5],
-  40: [45,  8, 18, 24, 5],
-  50: [42,  5, 22, 26, 5],
-  60: [40,  5, 25, 25, 5],
-  70: [38,  3, 28, 26, 5],
-  80: [35,  2, 30, 28, 5],
-  90: [30,  2, 33, 30, 5],
-  100:[28,  0, 35, 32, 5],
+  3:  [10, 10, 20,  0, 5, 55],
+  5:  [15, 10, 20,  0, 5, 50],
+  7:  [18, 12, 20,  2, 8, 40],
+  10: [25, 15, 15,  5, 10, 30],
+  15: [30, 20, 13,  7, 12, 18],
+  20: [30, 25, 12, 10, 13, 10],
+  25: [28, 27, 10, 12, 16, 7],
+  30: [25, 28,  8, 14, 20, 5],
+  40: [22, 28,  7, 16, 22, 5],
+  50: [20, 27,  5, 20, 23, 5],
+  60: [18, 27,  5, 22, 23, 5],
+  70: [16, 27,  3, 25, 24, 5],
+  80: [15, 25,  2, 28, 25, 5],
+  90: [12, 23,  2, 30, 28, 5],
+  100:[10, 22,  0, 33, 30, 5],
 };
 
 const CATS = [
+  {name:'한국주식',        color:'#e5534b', key:'한국주식'},
   {name:'미국주식 (보유)', color:'#3fb950', key:'미국주식'},
   {name:'금/은',          color:'#58a6ff', key:'금/은'},
   {name:'암호화폐',       color:'#f0883e', key:'암호화폐'},
@@ -1341,6 +1504,9 @@ const CATS = [
 ];
 
 const DESC = {
+  '한국주식': {
+    safe:'KOSPI 대형주 위주 안정적 투자', mid:'KOSPI+KOSDAQ 성장주 균형 배분', aggr:'KOSDAQ 중소형 잠재주 집중 발굴'
+  },
   '미국주식 (보유)': {
     safe:'대형 우량주 위주 보유 유지', mid:'성장주 비중 유지, 모멘텀 활용', aggr:'소형 성장주·테마주 집중, 변동성 감수'
   },
@@ -1515,8 +1681,8 @@ function updateAll() {
     // 주식이 충분히 성장 가능하면, 암호화폐에서 주식으로 비중 이동
     if (stockCoverage > 0.5) {
       const shift = Math.round((stockCoverage - 0.5) * 30); // 최대 15%p 이동
-      alloc[0] = alloc[0] + shift; // 주식 증가
-      alloc[2] = Math.max(5, alloc[2] - shift); // 암호화폐 감소
+      alloc[1] = alloc[1] + shift; // 미국주식 증가
+      alloc[3] = Math.max(5, alloc[3] - shift); // 암호화폐 감소
     }
   }
   alloc = normalize(alloc);
@@ -1529,13 +1695,13 @@ function updateAll() {
     // 확장 카테고리: 매크로 수혜 시 기본 카테고리에서 떼어서 배분
     const extCats = ['항공','방위산업','해운/물류','에너지(원유)','원유 인버스','클린에너지','이머징마켓','농업/식량','방산 인버스','VIX/변동성','테크 인버스','중국 인버스','채권 인버스','금/은 인버스','레버리지 ETF'];
     const parentMap = {
-      '항공':0, '방위산업':0, '클린에너지':0, '이머징마켓':0, '테크 인버스':0, '레버리지 ETF':0,
-      '해운/물류':3, '에너지(원유)':3, '원유 인버스':3, '농업/식량':3,
-      '방산 인버스':0, 'VIX/변동성':4, '중국 인버스':0, '채권 인버스':4, '금/은 인버스':1,
+      '항공':1, '방위산업':1, '클린에너지':1, '이머징마켓':1, '테크 인버스':1, '레버리지 ETF':1,
+      '해운/물류':4, '에너지(원유)':4, '원유 인버스':4, '농업/식량':4,
+      '방산 인버스':1, 'VIX/변동성':5, '중국 인버스':1, '채권 인버스':5, '금/은 인버스':2,
     };
-    // 기본 5카테고리 매크로 이벤트 기반 배분 조정 (강화)
-    const catMapping = ['미국주식','금/은','암호화폐','원자재','채권/안전자산'];
-    const baseAdj = [0,0,0,0,0];
+    // 기본 6카테고리 매크로 이벤트 기반 배분 조정 (강화)
+    const catMapping = ['한국주식','미국주식','금/은','암호화폐','원자재','채권/안전자산'];
+    const baseAdj = [0,0,0,0,0,0];
     for (const [sec, val] of Object.entries(macroBonus)) {
       const idx = catMapping.indexOf(sec);
       if (idx >= 0) {
@@ -1544,7 +1710,7 @@ function updateAll() {
           const reduction = Math.round(alloc[idx] * Math.min(0.5, Math.abs(val) / 70));
           baseAdj[idx] -= reduction;
           // 감소분을 다른 카테고리에 분배
-          const others = [0,1,2,3,4].filter(j => j !== idx && alloc[j] > 0);
+          const others = [0,1,2,3,4,5].filter(j => j !== idx && alloc[j] > 0);
           if (others.length > 0) {
             const each = Math.round(reduction / others.length);
             others.forEach(j => { baseAdj[j] += each; });
@@ -1639,11 +1805,11 @@ function updateAll() {
   const catScores = allCatKeys.map(k => {
     let baseScore = 0;
     if (risk <= 30) {
-      baseScore = {'채권/안전자산':50,'금/은':40,'원자재':20,'미국주식':10,'암호화폐':-10}[k] || 0;
+      baseScore = {'채권/안전자산':50,'금/은':40,'한국주식':30,'원자재':20,'미국주식':10,'암호화폐':-10}[k] || 0;
     } else if (risk <= 60) {
-      baseScore = {'미국주식':50,'금/은':30,'암호화폐':20,'원자재':15,'채권/안전자산':5}[k] || 10;
+      baseScore = {'한국주식':55,'미국주식':50,'금/은':30,'암호화폐':20,'원자재':15,'채권/안전자산':5}[k] || 10;
     } else {
-      baseScore = {'암호화폐':50,'미국주식':40,'원자재':20,'금/은':5,'채권/안전자산':-5}[k] || 15;
+      baseScore = {'암호화폐':50,'한국주식':45,'미국주식':40,'원자재':20,'금/은':5,'채권/안전자산':-5}[k] || 15;
     }
     return { key: k, score: baseScore + (macroBonus[k] || 0) };
   });
@@ -1731,21 +1897,23 @@ function updateAll() {
   // ── 액션 플랜 ──
   const actions = document.getElementById('actionTable');
   actions.innerHTML = '';
-  const stockPct = alloc[0];
-  const reducePct = 100 - stockPct;
+  const usPct = alloc[1];
+  const reducePct = 100 - usPct;
   const reduceAmt = Math.round(TOTAL*reducePct/100/10000);
 
   let step = 1;
   if (reducePct > 0) {
-    actions.innerHTML += `<tr><td style="text-align:center;font-weight:700;color:#f85149">${step}</td><td>미국주식 비중 조정</td><td class="reason">100% → ${stockPct}%로 축소. 약 ${reduceAmt.toLocaleString()}만원 매도</td></tr>`;
+    actions.innerHTML += `<tr><td style="text-align:center;font-weight:700;color:#f85149">${step}</td><td>미국주식 비중 조정</td><td class="reason">100% → ${usPct}%로 축소. 약 ${reduceAmt.toLocaleString()}만원 매도</td></tr>`;
     step++;
   }
 
-  // 기본 카테고리 액션
-  const actionCats = ['금/은','암호화폐','원자재','채권/안전자산'];
-  alloc.slice(1).forEach((pct,idx) => {
+  // 기본 카테고리 액션 (미국주식 제외)
+  const actionCats = ['한국주식','금/은','암호화폐','원자재','채권/안전자산'];
+  const actionIdxs = [0,2,3,4,5];
+  actionIdxs.forEach((ai,i) => {
+    const pct = alloc[ai];
     if (pct <= 0) return;
-    const catKey = actionCats[idx];
+    const catKey = actionCats[i];
     const amt = Math.round(TOTAL*pct/100/10000);
     const items = CANDIDATES[catKey];
     let topName = '해당 ETF';
