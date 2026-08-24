@@ -28,23 +28,28 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: github.event_name != 'push'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install dependencies
+        if: github.event_name != 'push'
         run: pip install yfinance pandas lxml
 
       - name: Restore history
+        if: github.event_name != 'push'
         run: |
           # 이전 빌드의 briefing_history.json을 GitHub Pages에서 복원
           curl -sf https://shryu0418.github.io/financial-briefing/briefing_history.json -o briefing_history.json || echo '[]' > briefing_history.json
 
       - name: Generate briefing
+        if: github.event_name != 'push'
         run: python financial_briefing.py
         continue-on-error: false
 
       - name: Save history to repo
+        if: github.event_name != 'push'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -55,8 +60,10 @@ jobs:
       - name: Prepare Pages artifact
         run: |
           mkdir -p _site
-          cp daily_briefing.html _site/index.html
-          cp daily_briefing.html _site/daily_briefing.html
+          if [ -f daily_briefing.html ]; then
+            cp daily_briefing.html _site/index.html
+            cp daily_briefing.html _site/daily_briefing.html
+          fi
           [ -f briefing_history.json ] && cp briefing_history.json _site/ || true
 
       - name: Upload Pages artifact
