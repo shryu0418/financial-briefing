@@ -932,10 +932,13 @@ def fetch_kr_stock_candidates(top_n=1000):
         df = pd.read_html(io.StringIO(r.text))[0]
         code_col = df.columns[2]
         name_col = df.columns[0]
+        sector_col = df.columns[3]
         df['code'] = df[code_col].astype(str).str.zfill(6)
         df['name'] = df[name_col]
+        df['sector'] = df[sector_col].astype(str)
         df = df[df['code'].str.match(r'^\d{6}$')]
         name_map = dict(zip(df['code'], df['name']))
+        sector_map = dict(zip(df['code'], df['sector']))
         all_codes = df['code'].tolist()
         print(f"  [한국주식] 전체 {len(all_codes)}개 종목")
     except Exception as e:
@@ -969,6 +972,7 @@ def fetch_kr_stock_candidates(top_n=1000):
                             turnover = closes.iloc[-1] * avg_vol
                             valid_tickers[c] = {
                                 'ticker': t, 'name': name_map.get(c, c),
+                                'sector': sector_map.get(c, ''),
                                 'turnover': turnover, 'last_close': closes.iloc[-1]
                             }
                             ks_valid.add(c)
@@ -999,6 +1003,7 @@ def fetch_kr_stock_candidates(top_n=1000):
                             turnover = closes.iloc[-1] * avg_vol
                             valid_tickers[c] = {
                                 'ticker': t, 'name': name_map.get(c, c),
+                                'sector': sector_map.get(c, ''),
                                 'turnover': turnover, 'last_close': closes.iloc[-1]
                             }
                     except Exception:
@@ -1058,6 +1063,7 @@ def fetch_kr_stock_candidates(top_n=1000):
                     drawdown = ((price - peak) / peak * 100) if peak > 0 else 0
                     candidates.append({
                         'ticker': t, 'name': info['name'], 'price': price,
+                        'sector': info.get('sector', ''),
                         'pct_1d': pct_1d, 'pct_1w': pct_1w, 'pct_1m': pct_1m,
                         'pct_3m': pct_3m, 'vol_30d': vol_30d, 'sharpe': sharpe_1m,
                         'rsi': rsi, 'accel': accel, 'drawdown': drawdown,
@@ -1310,14 +1316,68 @@ def generate_portfolio_html(holdings, candidates, suggestions, allocation, avg_1
         market_color = '#f85149'
 
     # 모든 후보 종목 데이터를 JSON으로 직렬화 (JS에서 동적 정렬용)
+    def make_reason(p):
+        parts = []
+        pct3 = p.get('pct_3m', 0)
+        pct1 = p.get('pct_1m', 0)
+        rsi = p.get('rsi', 50)
+        sharpe = p.get('sharpe', 0)
+        accel = p.get('accel', 0)
+        dd = p.get('drawdown', 0)
+        if pct3 > 50:
+            parts.append(f'3개월 +{pct3:.0f}% 강세')
+        elif pct3 > 20:
+            parts.append(f'3개월 +{pct3:.0f}% 상승')
+        if accel > 10:
+            parts.append('모멘텀 가속')
+        if rsi < 30:
+            parts.append('과매도 반등 기대')
+        if sharpe > 0.8:
+            parts.append('위험대비 수익 우수')
+        if dd > -5 and pct3 > 10:
+            parts.append('고점 근접')
+        if pct1 > 15:
+            parts.append(f'단기 +{pct1:.0f}%')
+        if not parts:
+            if pct3 > 0:
+                parts.append('완만한 상승세')
+            else:
+                parts.append('저점 매수 기회')
+        return ', '.join(parts[:2])
+
+    def make_issue(p):
+        parts = []
+        rsi = p.get('rsi', 50)
+        vol = p.get('vol_30d', 0)
+        dd = p.get('drawdown', 0)
+        pct1d = p.get('pct_1d', 0)
+        pct1 = p.get('pct_1m', 0)
+        if rsi > 75:
+            parts.append('RSI 과열 주의')
+        if vol > 80:
+            parts.append(f'변동성 {vol:.0f}%')
+        if dd < -20:
+            parts.append(f'고점 대비 {dd:.0f}%')
+        if pct1d > 8:
+            parts.append(f'당일 +{pct1d:.1f}% 급등')
+        elif pct1d < -8:
+            parts.append(f'당일 {pct1d:.1f}% 급락')
+        if pct1 < -15:
+            parts.append('1개월 급락')
+        if not parts:
+            parts.append('특이사항 없음')
+        return ', '.join(parts[:2])
+
     all_candidates_json = {}
     for cat, items in candidates.items():
         all_candidates_json[cat] = []
         for p in items:
-            # 보유 종목은 제외
             if p['ticker'] in [h['ticker'] for h in holdings]:
                 continue
             url = f"https://finance.yahoo.com/quote/{p['ticker']}"
+            sector = p.get('sector', '')
+            if not sector and cat != '한국주식':
+                sector = cat
             all_candidates_json[cat].append({
                 'name': p['name'],
                 'ticker': p['ticker'],
@@ -1333,6 +1393,9 @@ def generate_portfolio_html(holdings, candidates, suggestions, allocation, avg_1
                 'lev': p.get('lev', 1),
                 'tier': p.get('tier', 0),
                 'url': url,
+                'sector': sector,
+                'reason': make_reason(p),
+                'issue': make_issue(p),
             })
     candidates_json_str = json.dumps(all_candidates_json, ensure_ascii=False)
 
@@ -1862,14 +1925,12 @@ function updateAll() {
       const hidden = idx >= defaultShow ? ' class="expand-row" style="display:none"' : '';
       return `<tr${medal}${hidden}>
 <td><a href="${p.url}" target="_blank"><span class="ticker">${p.name}</span></a>${tag}${levBadge}${tierBadge}</td>
-<td>${p.ticker}</td>
+<td style="font-size:9px;color:#8b949e">${p.sector||''}</td>
 <td>${fmtPrice(p.price)}<br><span style="font-size:9px;color:${(p.pct_1d||0)>=0?'#3fb950':'#f85149'}">${(p.pct_1d||0)>=0?'+':''}${(p.pct_1d||0).toFixed(2)}%</span></td>
 <td>${fmtPct(p.pct_1m)}</td>
 <td>${fmtPct(p.pct_3m)}</td>
-<td>${p.vol.toFixed(1)}%</td>
-<td style="text-align:center">${rsiBadge}</td>
-<td style="text-align:center">${acBadge}</td>
-<td style="text-align:center">${ddStr}</td>
+<td style="font-size:9px;color:#58a6ff">${p.reason||''}</td>
+<td style="font-size:9px;color:#f0883e">${p.issue||''}</td>
 <td style="font-weight:600;color:${p.score>0?'#3fb950':'#f85149'}">${p.score.toFixed(1)}</td>
 </tr>`;
     }
@@ -1888,7 +1949,7 @@ function updateAll() {
     <span style="font-size:11px;color:#8b949e">${allocPct > 0 ? `배분 ${allocPct}% (${allocAmt.toLocaleString()}만원)` : '매크로 수혜 섹터'}</span>
   </div>
   <table class="stock-table" id="${expandId}">
-  <tr><th>종목</th><th>티커</th><th>현재가</th><th>1개월</th><th>3개월</th><th>변동성</th><th>RSI</th><th>추세</th><th>낙폭</th><th>적합도</th></tr>
+  <tr><th>종목</th><th>업종</th><th>현재가</th><th>1개월</th><th>3개월</th><th>추천 이유</th><th>주요 이슈</th><th>적합도</th></tr>
   ${rows}
   </table>
 </div>`;
