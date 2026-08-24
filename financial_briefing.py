@@ -1315,8 +1315,89 @@ def generate_portfolio_html(holdings, candidates, suggestions, allocation, avg_1
         market_state = '약세장'
         market_color = '#f85149'
 
+    # 추천 노출 종목에 대해 재무지표 가져오기 (PER, PBR, ROE 등)
+    import requests as _req
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _parse_naver_val(v):
+        if not v:
+            return None
+        v = v.replace(',', '').replace('배', '').replace('원', '').replace('%', '').strip()
+        try:
+            return float(v)
+        except Exception:
+            return None
+
+    def fetch_kr_fundamental(ticker):
+        code = ticker.split('.')[0]
+        try:
+            url = f'https://m.stock.naver.com/api/stock/{code}/integration'
+            r = _req.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=8)
+            data = r.json()
+            info_map = {item['code']: item.get('value', '') for item in data.get('totalInfos', [])}
+            return ticker, {
+                'per': _parse_naver_val(info_map.get('per')),
+                'fwd_per': _parse_naver_val(info_map.get('cnsPer')),
+                'pbr': _parse_naver_val(info_map.get('pbr')),
+                'div_yield': _parse_naver_val(info_map.get('dividendYieldRatio')),
+                'roe': None,
+                'rev_growth': None,
+                'earn_growth': None,
+                'margin': None,
+            }
+        except Exception:
+            return ticker, {}
+
+    def fetch_us_fundamental(ticker):
+        try:
+            info = yf.Ticker(ticker).info
+            return ticker, {
+                'per': info.get('trailingPE') or info.get('forwardPE'),
+                'pbr': info.get('priceToBook'),
+                'roe': info.get('returnOnEquity'),
+                'div_yield': (info.get('dividendYield') or 0) * 100 if info.get('dividendYield') else None,
+                'rev_growth': info.get('revenueGrowth'),
+                'earn_growth': info.get('earningsGrowth'),
+                'margin': info.get('profitMargins'),
+                'fwd_per': info.get('forwardPE'),
+            }
+        except Exception:
+            return ticker, {}
+
+    def fetch_fundamentals_batch(tickers, is_kr=False):
+        result = {}
+        fn = fetch_kr_fundamental if is_kr else fetch_us_fundamental
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for ticker, data in ex.map(fn, tickers):
+                if data and any(v is not None for v in data.values()):
+                    result[ticker] = data
+        return result
+
+    # 카테고리별 상위 후보 티커 수집 (개별주만 — ETF/코인 제외)
+    kr_tickers_for_fund = []
+    us_tickers_for_fund = []
+    holding_tickers = {h['ticker'] for h in holdings}
+    for cat, items in candidates.items():
+        scored = sorted(items, key=lambda x: x.get('pct_3m', 0) * 0.5 + x.get('pct_1m', 0) * 0.3 + x.get('accel', 0) * 0.2, reverse=True)
+        for p in scored[:15]:
+            if p['ticker'] in holding_tickers:
+                continue
+            if cat == '한국주식':
+                kr_tickers_for_fund.append(p['ticker'])
+            elif cat == '미국주식':
+                us_tickers_for_fund.append(p['ticker'])
+
+    fund_data = {}
+    if kr_tickers_for_fund:
+        print(f"  재무지표(한국): {len(kr_tickers_for_fund)}개...")
+        fund_data.update(fetch_fundamentals_batch(kr_tickers_for_fund, is_kr=True))
+    if us_tickers_for_fund:
+        print(f"  재무지표(미국): {len(us_tickers_for_fund)}개...")
+        fund_data.update(fetch_fundamentals_batch(us_tickers_for_fund, is_kr=False))
+    print(f"  재무지표 완료: {len(fund_data)}개 수집")
+
     # 모든 후보 종목 데이터를 JSON으로 직렬화 (JS에서 동적 정렬용)
-    def make_reason(p):
+    def make_reason(p, fund=None):
         parts = []
         pct3 = p.get('pct_3m', 0)
         pct1 = p.get('pct_1m', 0)
@@ -1324,26 +1405,53 @@ def generate_portfolio_html(holdings, candidates, suggestions, allocation, avg_1
         sharpe = p.get('sharpe', 0)
         accel = p.get('accel', 0)
         dd = p.get('drawdown', 0)
-        if pct3 > 50:
-            parts.append(f'3개월 +{pct3:.0f}% 강세')
-        elif pct3 > 20:
-            parts.append(f'3개월 +{pct3:.0f}% 상승')
-        if accel > 10:
-            parts.append('모멘텀 가속')
-        if rsi < 30:
-            parts.append('과매도 반등 기대')
-        if sharpe > 0.8:
-            parts.append('위험대비 수익 우수')
-        if dd > -5 and pct3 > 10:
-            parts.append('고점 근접')
-        if pct1 > 15:
-            parts.append(f'단기 +{pct1:.0f}%')
+        if fund:
+            per = fund.get('per')
+            fwd_per = fund.get('fwd_per')
+            pbr = fund.get('pbr')
+            roe = fund.get('roe')
+            rev_g = fund.get('rev_growth')
+            earn_g = fund.get('earn_growth')
+            margin = fund.get('margin')
+            div_y = fund.get('div_yield')
+            if per is not None and per > 0:
+                if per < 8:
+                    parts.append(f'PER {per:.1f} 저평가')
+                elif per < 15:
+                    parts.append(f'PER {per:.1f}')
+                else:
+                    parts.append(f'PER {per:.1f}')
+            if fwd_per is not None and fwd_per > 0 and (per is None or fwd_per < per * 0.7):
+                parts.append(f'추정PER {fwd_per:.1f}')
+            if pbr is not None and pbr > 0 and pbr < 1.5:
+                parts.append(f'PBR {pbr:.2f}')
+            if roe is not None and roe > 0.15:
+                parts.append(f'ROE {roe*100:.0f}%')
+            if earn_g is not None and earn_g > 0.2:
+                parts.append(f'이익성장 +{earn_g*100:.0f}%')
+            elif rev_g is not None and rev_g > 0.2:
+                parts.append(f'매출성장 +{rev_g*100:.0f}%')
+            if margin is not None and margin > 0.2:
+                parts.append(f'영업이익률 {margin*100:.0f}%')
+            if div_y is not None and div_y > 2:
+                parts.append(f'배당 {div_y:.1f}%')
+        if len(parts) < 3:
+            if pct3 > 50:
+                parts.append(f'3개월 +{pct3:.0f}%')
+            elif pct3 > 20:
+                parts.append(f'3개월 +{pct3:.0f}%')
+            if accel > 10:
+                parts.append('모멘텀 가속')
+            if rsi < 30:
+                parts.append('과매도 반등')
+            if sharpe > 0.8 and len(parts) < 3:
+                parts.append('위험대비 수익↑')
         if not parts:
             if pct3 > 0:
                 parts.append('완만한 상승세')
             else:
                 parts.append('저점 매수 기회')
-        return ', '.join(parts[:2])
+        return ', '.join(parts[:3])
 
     def make_issue(p):
         parts = []
@@ -1394,7 +1502,7 @@ def generate_portfolio_html(holdings, candidates, suggestions, allocation, avg_1
                 'tier': p.get('tier', 0),
                 'url': url,
                 'sector': sector,
-                'reason': make_reason(p),
+                'reason': make_reason(p, fund_data.get(p['ticker'])),
                 'issue': make_issue(p),
             })
     candidates_json_str = json.dumps(all_candidates_json, ensure_ascii=False)
