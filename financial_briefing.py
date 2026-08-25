@@ -927,7 +927,8 @@ def fetch_kr_stock_candidates(top_n=1000):
     print("  [한국주식] KRX 종목 리스트 수집...")
     try:
         url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13'
-        r = requests.get(url, timeout=15)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        r = requests.get(url, headers=headers, timeout=30)
         r.encoding = 'euc-kr'
         df = pd.read_html(io.StringIO(r.text))[0]
         code_col = df.columns[2]

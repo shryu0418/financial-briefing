@@ -3,6 +3,8 @@ name: Daily Financial Briefing
 on:
   push:
     branches: [main]
+    paths:
+      - 'daily_briefing.html'
   schedule:
     # 매일 오전 7시 KST = 22:00 UTC (전날)
     - cron: '0 22 * * *'
